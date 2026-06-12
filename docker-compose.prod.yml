@@ -1,0 +1,63 @@
+version: '3.8'
+
+# PROD environment — env vars from .env file, restart policies; Tableau connects to :5432
+
+services:
+  postgres-dwh:
+    image: postgres:15-alpine
+    container_name: nyc_taxi_dwh_prod
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    ports:
+      - "5432:5432"   # exposed for the BI layer (Tableau)
+    volumes:
+      - pgdata_prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: always
+    networks:
+      - prod-network
+
+  db-init:
+    image: postgres:15-alpine
+    depends_on:
+      postgres-dwh:
+        condition: service_healthy
+    volumes:
+      - ./src/db/schema.sql:/schema.sql:ro
+    command: psql -h postgres-dwh -U ${POSTGRES_USER} -d ${POSTGRES_DB} -f /schema.sql
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    networks:
+      - prod-network
+
+  etl-runner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.etl
+    image: custom-pyspark-etl-lean
+    container_name: pyspark_etl_prod
+    working_dir: /app
+    environment:
+      - DB_URL=jdbc:postgresql://postgres-dwh:5432/${POSTGRES_DB}
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+    depends_on:
+      postgres-dwh:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    networks:
+      - prod-network
+
+volumes:
+  pgdata_prod:
+
+networks:
+  prod-network:
+    driver: bridge

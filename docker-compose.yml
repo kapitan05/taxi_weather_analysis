@@ -1,0 +1,61 @@
+version: '3.8'
+
+# DEV environment — Postgres DWH + PySpark ETL runner; BI (Tableau) connects to :5432
+
+services:
+  postgres-dwh:
+    image: postgres:15-alpine
+    container_name: nyc_taxi_dwh
+    environment:
+      POSTGRES_USER: data_engineer
+      POSTGRES_PASSWORD: password123
+      POSTGRES_DB: nyc_weather_taxi
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U data_engineer -d nyc_weather_taxi"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - data-network
+
+  db-init:
+    image: postgres:15-alpine
+    depends_on:
+      postgres-dwh:
+        condition: service_healthy
+    volumes:
+      - ./src/db/schema.sql:/schema.sql:ro
+    command: psql -h postgres-dwh -U data_engineer -d nyc_weather_taxi -f /schema.sql
+    environment:
+      PGPASSWORD: password123
+    networks:
+      - data-network
+
+  etl-runner:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.etl
+    image: custom-pyspark-etl-lean
+    container_name: pyspark_etl
+    volumes:
+      - ./src:/app/src
+      - ./main.py:/app/main.py
+    working_dir: /app
+    depends_on:
+      postgres-dwh:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    networks:
+      - data-network
+
+volumes:
+  pgdata:
+
+networks:
+  data-network:
+    driver: bridge
