@@ -59,58 +59,58 @@ CREATE TABLE IF NOT EXISTS staging.zone_lookup (
 -- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS dwh.dim_date (
-    date_key        INTEGER PRIMARY KEY,        -- YYYYMMDD
+    date_key        BIGINT  PRIMARY KEY,            -- YYYYMMDD
     full_date       DATE    NOT NULL UNIQUE,
     year            INTEGER NOT NULL,
     month           INTEGER NOT NULL,
     day             INTEGER NOT NULL,
     holiday_flag    BOOLEAN NOT NULL DEFAULT FALSE,
-    holiday_name    TEXT
+    holiday_name    VARCHAR(100)
 );
 
 CREATE TABLE IF NOT EXISTS dwh.dim_time (
-    time_key        INTEGER PRIMARY KEY,        -- HHMMSS (minute grain, SS=00)
-    hour            INTEGER NOT NULL,
-    minute          INTEGER NOT NULL,
-    time_of_day     TEXT    NOT NULL            -- Night / Morning / Afternoon / Evening
+    time_key        BIGINT      PRIMARY KEY,        -- HHMMSS (minute grain, SS=00)
+    hour            BIGINT      NOT NULL,
+    minute          SMALLINT    NOT NULL,
+    time_of_day     VARCHAR(20) NOT NULL            -- Night / Morning / Afternoon / Evening
 );
 
 CREATE TABLE IF NOT EXISTS dwh.dim_location (
-    location_key    INTEGER PRIMARY KEY,        -- = TLC LocationID (natural key)
-    location_id     INTEGER NOT NULL,
-    borough         TEXT    NOT NULL,
-    zone            TEXT    NOT NULL,
-    service_zone    TEXT    NOT NULL
+    location_key    BIGINT       PRIMARY KEY,       -- = TLC LocationID (natural key)
+    location_id     INTEGER      NOT NULL,
+    borough         VARCHAR(60)  NOT NULL,
+    zone            VARCHAR(100) NOT NULL,
+    service_zone    VARCHAR(60)  NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS dwh.dim_weather_type (
-    weather_type_key  INTEGER PRIMARY KEY,      -- = WMO weather code
-    condition_name    TEXT NOT NULL,
-    description       TEXT NOT NULL
+    weather_type_key  BIGINT       PRIMARY KEY,     -- = WMO weather code
+    condition_name    VARCHAR(100) NOT NULL,
+    description       VARCHAR(200)
 );
 
 CREATE TABLE IF NOT EXISTS dwh.fact_trip (
-    date_key            INTEGER NOT NULL REFERENCES dwh.dim_date (date_key),
-    time_key            INTEGER NOT NULL REFERENCES dwh.dim_time (time_key),
-    pu_location_key     INTEGER REFERENCES dwh.dim_location (location_key),
-    do_location_key     INTEGER REFERENCES dwh.dim_location (location_key),
-    trip_distance       REAL    NOT NULL,
-    fare_amount         REAL    NOT NULL,
-    tip_amount          REAL    NOT NULL,
-    total_amount        REAL    NOT NULL,
-    trip_duration_sec   INTEGER NOT NULL,
-    passenger_count     INTEGER NOT NULL,
-    loaded_at           TIMESTAMP DEFAULT NOW()
+    date_key            BIGINT          NOT NULL REFERENCES dwh.dim_date (date_key),
+    time_key            BIGINT          NOT NULL REFERENCES dwh.dim_time (time_key),
+    pu_location_key     BIGINT          REFERENCES dwh.dim_location (location_key),
+    do_location_key     BIGINT          REFERENCES dwh.dim_location (location_key),
+    trip_distance       NUMERIC(6,2)    NOT NULL,
+    fare_amount         NUMERIC(19,4)   NOT NULL,
+    tip_amount          NUMERIC(19,4)   NOT NULL,
+    total_amount        NUMERIC(19,4)   NOT NULL,
+    trip_duration_sec   INTEGER         NOT NULL,
+    passenger_count     INTEGER,
+    loaded_at           TIMESTAMP       DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS dwh.fact_weather (
-    date_key            INTEGER NOT NULL REFERENCES dwh.dim_date (date_key),
-    time_key            INTEGER NOT NULL REFERENCES dwh.dim_time (time_key),   -- hourly grain (MMSS=0000)
-    weather_type_key    INTEGER NOT NULL REFERENCES dwh.dim_weather_type (weather_type_key),
-    temperature         REAL    NOT NULL,
-    precipitation       REAL    NOT NULL,
-    wind_speed          REAL    NOT NULL,
-    loaded_at           TIMESTAMP DEFAULT NOW(),
+    date_key            BIGINT          NOT NULL REFERENCES dwh.dim_date (date_key),
+    time_key            BIGINT          NOT NULL REFERENCES dwh.dim_time (time_key),   -- hourly grain (MMSS=0000)
+    weather_type_key    BIGINT          NOT NULL REFERENCES dwh.dim_weather_type (weather_type_key),
+    temperature         NUMERIC(5,2)    NOT NULL,
+    precipitation       NUMERIC(6,2)    NOT NULL,
+    wind_speed          NUMERIC(5,2)    NOT NULL,
+    loaded_at           TIMESTAMP       DEFAULT NOW(),
     PRIMARY KEY (date_key, time_key)
 );
 
