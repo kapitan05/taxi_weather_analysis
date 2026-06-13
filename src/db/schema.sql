@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS dwh.fact_trip (
     time_key            BIGINT          NOT NULL REFERENCES dwh.dim_time (time_key),
     pu_location_key     BIGINT          REFERENCES dwh.dim_location (location_key),
     do_location_key     BIGINT          REFERENCES dwh.dim_location (location_key),
-    trip_distance       NUMERIC(6,2)    NOT NULL,
+    trip_distance       NUMERIC(8,2)    NOT NULL,
     fare_amount         NUMERIC(19,4)   NOT NULL,
     tip_amount          NUMERIC(19,4)   NOT NULL,
     total_amount        NUMERIC(19,4)   NOT NULL,
