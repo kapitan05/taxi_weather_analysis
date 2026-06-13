@@ -284,7 +284,7 @@ Seeded statycznie przez `schema.sql`. Przykłady: 0=Clear sky, 61=Slight rain, 7
 | time_key | BIGINT | FK → dim_time NOT NULL | Klucz czasu podjęcia |
 | pu_location_key | BIGINT | FK → dim_location NULL | Strefa podjęcia |
 | do_location_key | BIGINT | FK → dim_location NULL | Strefa wysadzenia |
-| trip_distance | DECIMAL(6,2) | NOT NULL | Dystans (mile) |
+| trip_distance | DECIMAL(8,2) | NOT NULL | Dystans (mile) |
 | fare_amount | MONEY | NOT NULL | Opłata podstawowa (USD) |
 | tip_amount | MONEY | NOT NULL | Napiwek (USD) |
 | total_amount | MONEY | NOT NULL | Całkowita opłata (USD) |
@@ -358,45 +358,45 @@ ConditionName (Clear/Rain/Snow/…) → weather_type_key (WMO code)
 - **Suma opadów vs. liczba przejazdów** — blending fact_weather + fact_trip po date_key
 
 ---
-
 ## 7. Opis warstwy raportowej
 
 ### Dostęp do danych
-
-Tableau Desktop łączy się bezpośrednio z bazą PostgreSQL przez połączenie TCP:
+Aplikacja Tableau Desktop łączy się bezpośrednio z bazą PostgreSQL poprzez standardowe połączenie TCP. Dane pobierane są w trybie Live / Extract (w zależności od potrzeb analitycznych).
 
 | Parametr | Wartość |
 |---|---|
-| Server | localhost (lub adres hosta Docker) |
-| Port | 5432 |
-| Database | nyc_weather_taxi |
-| Schema | dwh |
-| User | data_engineer |
+| **Server** | `localhost` (lub adres hosta Docker) |
+| **Port** | `5432` |
+| **Database** | `nyc_weather_taxi` |
+| **Schema** | `dwh` |
+| **User** | `data_engineer` |
 
-### Model biznesowy w Tableau
+### Model biznesowy danych
+W warstwie semantycznej Tableau zastosowano model relacyjny oparty na **Logical Layer** (Relacje zamiast fizycznych złączeń typu JOIN). Umożliwia to elastyczną analizę danych o różnym poziomie ziarnistości (przejazdy vs pogoda) bez ryzyka duplikacji danych.
 
-Schemat łączenia tabel (relacje po kluczach naturalnych):
+Model biznesowy to klasyczna **Konstelacja Faktów (Galaxy Schema)**:
+* **Fakty przejazdów** (`fact_trip`) i **Fakty pogodowe** (`fact_weather`) funkcjonują jako niezależne tabele centralne.
+* Współdzielą one (Blend / Relacje) wymiary wspólne: `dim_date` oraz `dim_time`.
+* Tabela `fact_trip` posiada dodatkowe relacje z `dim_location` (osobno dla strefy startowej i końcowej).
+* Tabela `fact_weather` posiada dedykowaną relację z `dim_weather_type`.
 
-```
-dim_date ──── fact_trip ──── dim_time
-              fact_trip ──── dim_location (pu_location_key)
-              fact_trip ──── dim_location (do_location_key)
+### Hierarchie w warstwie raportowej
+Aby ułatwić użytkownikom końcowym analizę typu "drill-down" (np. od lat do pojedynczych minut), w Tableau zdefiniowano następujące hierarchie nawigacyjne:
+* **Data:** `Year` → `Month` → `Day`
+* **Czas:** `Time of Day` → `Hour` → `Minute`
+* **Lokalizacja:** `Borough` → `Zone` → `Service Zone`
+* **Pogoda:** `Condition Name` → `Description`
 
-dim_date ──── fact_weather ──── dim_time
-              fact_weather ──── dim_weather_type
-```
+### Transformacje w obrębie warstwy raportowej
+Oprócz twardych danych z bazy `dwh`, w warstwie raportowej Tableau zdefiniowano dedykowane transformacje (Calculated Fields), które wzbogacają analizę bez obciążania bazy danych:
 
-Obie tabele faktów (`fact_trip`, `fact_weather`) współdzielą wymiary `dim_date` i `dim_time` — umożliwia to blendowanie danych pogodowych z danymi o przejazdach na poziomie dnia lub godziny bez tworzenia złączeń w SQL.
-
-### Hierarchie w Tableau
-
-Zalecane hierarchie do zdefiniowania w Tableau:
-- **Date**: Year → Month → Day
-- **Time**: Time of Day → Hour → Minute
-- **Location**: Borough → Zone → Service Zone
-- **Weather**: Condition Name → (weather_type_key)
-
----
+1.  **Miary biznesowe (KPIs):**
+    * `[Tip Percentage]` = `SUM([tip_amount]) / SUM([fare_amount])` (Procent napiwku względem opłaty za kurs).
+    * `[Avg Trip Revenue]` = `SUM([total_amount]) / COUNT([fact_trip])` (Średni przychód na przejazd).
+    * `[Revenue per Mile]` = `SUM([total_amount]) / SUM([trip_distance])` (Rentowność jednej mili).
+2.  **Kategoryzacje i Flagi (Wymiary wyliczane):**
+    * `[Is Bad Weather]` = `IF [condition_name] IN ('Rain', 'Snow', 'Thunderstorm') THEN True ELSE False END` (Ułatwia szybkie filtrowanie pogody na dobrą/złą).
+3.  **Formatowanie:** Automatyczne rzutowanie pól walutowych (np. `fare_amount`) na format `$ USD` oraz dystansu na `miles` z dokładnością do dwóch miejsc po przecinku.
 
 ## 8. Opis realizacji przykładowych raportów
 
@@ -500,7 +500,7 @@ ORDER BY d.full_date, dt.hour;
 
 ### Narzędzie i metodologia
 
-Moduł jakości danych: `src/quality/checks.py`. Uruchomienie: `uv run python -m src.quality.checks`. Wyniki zapisywane do `reports/quality_report.{md,json}`. Wyjście niezerowe jeśli którekolwiek sprawdzenie nie przeszło.
+Moduł jakości danych: `src/quality/checks.py`. Uruchomienie: `uv run python -m src.quality.checks`. Wyniki zapisywane do `reports/quality_report.{md,json}`. Zero na wyjściu w testach poza sprawdzeniem liczebości oznacza, ze test przeszedł.
 
 ### Wykryte i naprawione problemy
 
@@ -529,7 +529,7 @@ Podczas wdrożenia i pierwszego załadowania danych (2026-06-11) zidentyfikowano
 | Kompletność | Liczba wierszy: dwh.fact_trip | PASS | 5 617 092 |
 | Kompletność | Liczba wierszy: dwh.fact_weather | PASS | 1 416 |
 | Poprawność | fact_trip: null w kluczach/miarach | PASS | 0 |
-| Poprawność | fact_trip: niepositive miary | PASS | 0 |
+| Poprawność | fact_trip: nie pozytywne miary | PASS | 0 |
 | Integralność | fact_trip: sieroty date_key | PASS | 0 |
 | Integralność | fact_trip: sieroty pu_location_key | PASS | 0 |
 | Integralność | fact_weather: sieroty weather_type_key | PASS | 0 |
@@ -565,7 +565,7 @@ Format wyników: cel / kroki / oczekiwany wynik / potwierdzenie.
 
 ### T1 — Warstwa ETL: inicjalizacja (init load)
 
-**Cel:** Potwierdzenie pełnego załadowania danych od zera.
+**Cel:** Potwierdzenie pełnego załadowania danych.
 
 **Kroki:**
 1. `docker compose up -d` (start stosu, aplikacja schematu przez db-init)
@@ -623,7 +623,7 @@ Wynik identyczny z T1 — zero duplikacji.
 
 ### T4 — Warstwa hurtowni: poprawność transformacji
 
-**Cel:** Weryfikacja poprawności derywacji kluczy i miar.
+**Cel:** Weryfikacja poprawności transformacji kluczy i miar.
 
 **Kroki:**
 1. SQL: `SELECT MIN(trip_duration_sec), MIN(date_key), MAX(date_key) FROM dwh.fact_trip;`
@@ -688,8 +688,7 @@ Schema init: `INSERT 0 1440` (dim_time), `INSERT 0 28` (dim_weather_type), `0 er
 ## 11. Podsumowanie
 
 ### Ocena techniczna
-
-System w pełni realizuje założony model konstelacji faktów z raportu wstępnego. Zaimplementowano:
+ Zaimplementowano:
 - **6 tabel** w schemacie `dwh` (4 wymiary + 2 fakty) z rzeczywistymi kluczami obcymi
 - **3 moduły ingresji** (TLC, Open-Meteo, Zone Lookup) z obsługą błędów i mechanizmem ponowień
 - **Dwa scenariusze ładowania** (init i incremental) — oba idempotentne
@@ -714,12 +713,10 @@ System umożliwia realizację wszystkich 6 raportów biznesowych zdefiniowanych 
 
 | Zadanie | Wykonawca |
 |---|---|
-| Projekt modelu DWH (konstelacja faktów, DDL) | Maksim Razantsau |
-| Implementacja ETL — moduł TLC (taxi_ingest.py) | Maksim Razantsau |
-| Implementacja ETL — moduł pogodowy (weather_ingest.py) | Maksim Razantsau |
-| Implementacja ETL — słownik stref (zone_ingest.py) | Maksim Razantsau |
-| Pipeline transformacji (pipeline.py, dimensions.py) | Maksim Razantsau |
-| Moduł jakości danych (quality/checks.py) | Maksim Razantsau |
+| Projekt modelu DWH | Oleksii Vinichenko |
+| Implementacja ETL | Maksim Razantsau |
+| Pipeline transformacji| Maksim Razantsau |
+| Moduł jakości danych (quality/checks.py) | Oleksii Vinichenko |
 | Konfiguracja Docker Compose | Maksim Razantsau |
 | Testowanie i weryfikacja end-to-end | Maksim Razantsau |
 | [do uzupełnienia] | Oleksii Vinichenko |
