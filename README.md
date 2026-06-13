@@ -80,20 +80,11 @@ Connect Tableau to PostgreSQL:
 - Join facts to dimensions on `date_key`, `time_key`, `*_location_key`, `weather_type_key`
 - Hierarchies: Date (Year → Month → Day), Time (Time of day → Hour → Minute), Location (Borough → Zone → Service zone)
 
-## Production deployment
-
-```bash
-cp .env.example .env   # fill in credentials
-docker compose -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.prod.yml exec etl-runner \
-  uv run python main.py --year 2023 --start-month 1 --end-month 1 --mode init
-```
-
 ### Fresh start / reset
 
 ```bash
-docker compose -f docker-compose.prod.yml down -v   # removes containers and pgdata_prod volume
-docker compose -f docker-compose.prod.yml up -d
+docker compose down -v   # removes containers and pgdata volume
+docker compose up -d
 ```
 
 ## Project layout
