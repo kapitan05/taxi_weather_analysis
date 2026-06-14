@@ -75,13 +75,27 @@ CREATE TABLE IF NOT EXISTS dwh.dim_time (
     time_of_day     VARCHAR(20) NOT NULL            -- Night / Morning / Afternoon / Evening
 );
 
+-- SCD2 (type 2) dimension: one row per version of a taxi zone.
+-- location_sk = surrogate (per-version identity); location_id = TLC business key
+-- (stable across versions). service_zone may change over time -> new version.
 CREATE TABLE IF NOT EXISTS dwh.dim_location (
-    location_key    BIGINT       PRIMARY KEY,       -- = TLC LocationID (natural key)
-    location_id     INTEGER      NOT NULL,
+    location_sk     BIGINT       GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    location_id     INTEGER      NOT NULL,           -- business / natural key (TLC LocationID)
     borough         VARCHAR(60)  NOT NULL,
     zone            VARCHAR(100) NOT NULL,
-    service_zone    VARCHAR(60)  NOT NULL
+    service_zone    VARCHAR(60)  NOT NULL,
+    valid_from      DATE         NOT NULL DEFAULT DATE '1900-01-01',
+    valid_to        DATE         NOT NULL DEFAULT DATE '9999-12-31',
+    is_current      BOOLEAN      NOT NULL DEFAULT TRUE,
+    version         INTEGER      NOT NULL DEFAULT 1,
+    UNIQUE (location_id, valid_from)
 );
+
+-- Exactly one current row per business key.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_dim_location_current
+    ON dwh.dim_location (location_id) WHERE is_current;
+CREATE INDEX IF NOT EXISTS idx_dim_location_id
+    ON dwh.dim_location (location_id, valid_from, valid_to);
 
 CREATE TABLE IF NOT EXISTS dwh.dim_weather_type (
     weather_type_key  BIGINT       PRIMARY KEY,     -- = WMO weather code
@@ -92,8 +106,12 @@ CREATE TABLE IF NOT EXISTS dwh.dim_weather_type (
 CREATE TABLE IF NOT EXISTS dwh.fact_trip (
     date_key            BIGINT          NOT NULL REFERENCES dwh.dim_date (date_key),
     time_key            BIGINT          NOT NULL REFERENCES dwh.dim_time (time_key),
-    pu_location_key     BIGINT          REFERENCES dwh.dim_location (location_key),
-    do_location_key     BIGINT          REFERENCES dwh.dim_location (location_key),
+    -- Holds the TLC LocationID business key. No FK: dim_location is SCD2 and
+    -- location_id is not unique there. Resolve to the live version via
+    -- (pu_location_key = dim_location.location_id AND dim_location.is_current).
+    -- Referential integrity is enforced by src/quality/checks.py.
+    pu_location_key     BIGINT,
+    do_location_key     BIGINT,
     trip_distance       NUMERIC(8,2)    NOT NULL,
     fare_amount         NUMERIC(19,4)   NOT NULL,
     tip_amount          NUMERIC(19,4)   NOT NULL,

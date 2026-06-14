@@ -52,10 +52,40 @@ ZERO_EXPECTED_CHECKS: dict[str, str] = {
         LEFT JOIN dwh.dim_date d ON f.date_key = d.date_key
         WHERE d.date_key IS NULL
     """,
+    # dim_location is SCD2 (no DB FK); RI is enforced here against the live
+    # version of each zone (location_id + is_current).
     "fact_trip: orphaned pickup location": """
         SELECT COUNT(*) FROM dwh.fact_trip f
-        LEFT JOIN dwh.dim_location l ON f.pu_location_key = l.location_key
-        WHERE f.pu_location_key IS NOT NULL AND l.location_key IS NULL
+        LEFT JOIN dwh.dim_location l
+               ON f.pu_location_key = l.location_id AND l.is_current
+        WHERE f.pu_location_key IS NOT NULL AND l.location_id IS NULL
+    """,
+    "fact_trip: orphaned dropoff location": """
+        SELECT COUNT(*) FROM dwh.fact_trip f
+        LEFT JOIN dwh.dim_location l
+               ON f.do_location_key = l.location_id AND l.is_current
+        WHERE f.do_location_key IS NOT NULL AND l.location_id IS NULL
+    """,
+    "dim_location: >1 current row per zone": """
+        SELECT COUNT(*) FROM (
+            SELECT location_id FROM dwh.dim_location
+            WHERE is_current GROUP BY location_id HAVING COUNT(*) > 1
+        ) d
+    """,
+    "dim_location: current row not open-ended": """
+        SELECT COUNT(*) FROM dwh.dim_location
+        WHERE is_current AND valid_to <> DATE '9999-12-31'
+    """,
+    "dim_location: overlapping validity intervals": """
+        SELECT COUNT(*) FROM dwh.dim_location a
+        JOIN dwh.dim_location b
+          ON a.location_id = b.location_id
+         AND a.location_sk <> b.location_sk
+         AND a.valid_from <= b.valid_to
+         AND b.valid_from <= a.valid_to
+    """,
+    "dim_location: valid_from after valid_to": """
+        SELECT COUNT(*) FROM dwh.dim_location WHERE valid_from > valid_to
     """,
     "fact_weather: orphaned weather type": """
         SELECT COUNT(*) FROM dwh.fact_weather f

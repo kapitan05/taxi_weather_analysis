@@ -20,6 +20,7 @@ from pyspark.sql.window import Window
 
 from src.db.connection import JDBC_PROPERTIES, JDBC_URL, execute, fetch_one
 from src.transform.dimensions import date_key, load_dim_date, load_dim_location
+from src.transform.scd_simulation import overrides_effective_on, planned_changes
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +83,14 @@ def _build_fact_trip(spark: SparkSession, start: date, end: date) -> None:
         & (col("tpep_pickup_datetime") < (end + timedelta(days=1)).isoformat())
     )
 
+    # fact_trip carries the TLC LocationID business key. dim_location is SCD2,
+    # so a zone may have several rows; we only need the set of valid business
+    # keys to filter out unknown locations.
     known_locations = [
-        row.location_key
+        row.location_id
         for row in _read_staging(spark, "dwh.dim_location")
-        .select("location_key")
+        .select("location_id")
+        .distinct()
         .collect()
     ]
 
@@ -178,16 +183,30 @@ def _build_fact_weather(spark: SparkSession, start: date, end: date) -> None:
     logger.info("wrote dwh.fact_weather", extra={"rows": written})
 
 
-def run_pipeline(spark: SparkSession, year: int, months: list[int]) -> None:
+def run_pipeline(
+    spark: SparkSession,
+    year: int,
+    months: list[int],
+    simulate_scd2: bool = True,
+) -> None:
     """Load dimensions, then both fact tables for the given period.
 
     Assumes prepare_load() already cleared the dwh targets for this period,
     so fact writes are plain appends.
+
+    dim_location is maintained as an SCD2 dimension. Because the real TLC zone
+    lookup is static, synthetic service_zone changes (effective on/before the
+    period end) are injected when simulate_scd2 is True, so SCD2 versioning is
+    exercised end-to-end. Changes take effect from the period start.
     """
     start, end = period_bounds(year, months)
 
     load_dim_date(start, end)
-    load_dim_location()
+
+    overrides = (
+        overrides_effective_on(planned_changes(year), end) if simulate_scd2 else None
+    )
+    load_dim_location(effective_date=start, service_zone_overrides=overrides)
 
     _build_fact_trip(spark, start, end)
     _build_fact_weather(spark, start, end)

@@ -24,12 +24,18 @@ The load runs in two phases:
 |-------|-----------------|
 | `dwh.dim_date` | One row per day; `date_key` = YYYYMMDD; US/NY holiday flag + name |
 | `dwh.dim_time` | One row per minute; `time_key` = HHMMSS; time-of-day bucket |
-| `dwh.dim_location` | TLC taxi zones (borough → zone → service zone) |
+| `dwh.dim_location` | TLC taxi zones (borough → zone → service zone), **SCD2** — versioned history of `service_zone` |
 | `dwh.dim_weather_type` | WMO weather codes (Clear, Rain, Snow, …) |
 | `dwh.fact_trip` | One row per trip: distance, fare, tip, total, duration, passengers |
 | `dwh.fact_weather` | One row per hour (aggregated from 15-min data): temperature, precipitation, wind speed, dominant weather type |
 
 `dim_time` and `dim_weather_type` are seeded statically by `src/db/schema.sql`; `dim_date` and `dim_location` are maintained by the pipeline.
+
+### SCD2 on `dim_location`
+
+`dim_location` is a slowly-changing dimension of type 2: each row is one *version* of a taxi zone, keyed by a surrogate `location_sk`, with the TLC `location_id` as the stable business key plus `valid_from` / `valid_to` / `is_current` / `version`. When a zone's `service_zone` (or borough/zone) changes, the current row is closed (`valid_to` set, `is_current = false`) and a new current version is inserted — so the full history is retained.
+
+The real TLC zone lookup is static, so `src/transform/scd_simulation.py` injects deterministic, clearly-synthetic `service_zone` reclassifications (effective mid-year) to exercise the SCD2 behaviour; pass `simulate_scd2=False` to `run_pipeline` to disable. `fact_trip` stores the `location_id` business key (no DB FK, since `location_id` is non-unique across versions); queries resolve the live version via `pu_location_key = dim_location.location_id AND is_current`, and `src/quality/checks.py` enforces referential integrity plus SCD2 invariants (one current row per zone, no overlapping intervals, open-ended current row).
 
 ## Quick start
 
@@ -76,9 +82,25 @@ Results are written to `reports/quality_report.md` and `reports/quality_report.j
 
 Connect Tableau to PostgreSQL:
 
-- **Server/port:** `localhost:5432` · **Database:** `nyc_weather_taxi` · **Schema:** `dwh`
-- Join facts to dimensions on `date_key`, `time_key`, `*_location_key`, `weather_type_key`
+- **Server/port:** `localhost:5432` · **Database:** `nyc_weather_taxi` · **Schema:** `dwh` (facts/dims) and `rpt` (report views)
+- Join facts to dimensions on `date_key`, `time_key`, `weather_type_key`; for location join `*_location_key = dim_location.location_id AND is_current` (SCD2)
 - Hierarchies: Date (Year → Month → Day), Time (Time of day → Hour → Minute), Location (Borough → Zone → Service zone)
+
+### Reporting layer + rendered reports
+
+`src/reporting/views.sql` defines a `rpt` schema of six report-ready views over `dwh.*` (precipitation vs trips, temperature vs duration, monthly trend, daily KPI by borough, seasonal comparison, hourly weather), each joining the live SCD2 zone version. Tableau can connect directly to these, or render them headlessly:
+
+```bash
+docker compose exec etl-runner uv run python -m src.reporting.render
+```
+
+This (re)creates the views and writes one PNG per report to `reports/figures/` plus a combined `reports/reports.pdf`. The data-shaping logic lives in pure functions (`src/reporting/render.py`) that are unit-tested without a database.
+
+### Tests
+
+```bash
+uv run pytest          # pure unit tests: SCD2 diff, simulation, reporting shaping
+```
 
 ### Fresh start / reset
 
@@ -92,9 +114,11 @@ docker compose up -d
 ```
 src/
   ingest/      PySpark ingestion — TLC Parquet, zone lookup CSV, Open-Meteo 15-min → staging.*
-  transform/   Dimension + fact builders (constellation), incremental load control
+  transform/   Dimension + fact builders (constellation), SCD2 dim_location + simulation, incremental load control
+  reporting/   rpt views (views.sql) + headless report rendering (render.py)
   quality/     Data quality checks → reports/quality_report.{md,json}
   db/          schema.sql — idempotent DDL + static dim seeds; psycopg2 connection helpers
+tests/         Pure unit tests (SCD2 diff, simulation, reporting shaping)
 docker/
   Dockerfile.etl   python:3.12-slim + JRE + uv
 ```
