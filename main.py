@@ -1,10 +1,18 @@
 import argparse
 import logging
+import os
 import sys
 
 from src.ingest.logging_config import setup_json_logging
 
 setup_json_logging()
+
+# Driver heap must be set before the JVM starts, so it goes via the submit
+# args (config('spark.driver.memory') is ignored once the driver JVM is up).
+# Override with SPARK_DRIVER_MEMORY; ensure Docker Desktop has enough RAM
+# (driver 4g needs ~6 GB allocated to Docker).
+DRIVER_MEMORY = os.getenv("SPARK_DRIVER_MEMORY", "4g")
+os.environ["PYSPARK_SUBMIT_ARGS"] = f"--driver-memory {DRIVER_MEMORY} pyspark-shell"
 
 from pyspark.sql import SparkSession
 
@@ -20,6 +28,8 @@ def build_spark() -> SparkSession:
     return (
         SparkSession.builder.appName("NYCTaxiWeatherDWH")
         .config("spark.jars.packages", "org.postgresql:postgresql:42.6.0")
+        .config("spark.driver.memory", DRIVER_MEMORY)
+        .config("spark.sql.shuffle.partitions", os.getenv("SPARK_SHUFFLE_PARTITIONS", "16"))
         .getOrCreate()
     )
 

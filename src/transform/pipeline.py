@@ -1,5 +1,6 @@
 import calendar
 import logging
+import os
 from datetime import date, timedelta
 
 from pyspark.sql import DataFrame, SparkSession
@@ -24,6 +25,9 @@ from src.transform.scd_simulation import overrides_effective_on, planned_changes
 
 logger = logging.getLogger(__name__)
 
+JDBC_WRITE_URL = JDBC_URL + ("&" if "?" in JDBC_URL else "?") + "reWriteBatchedInserts=true"
+JDBC_WRITE_PROPERTIES = {**JDBC_PROPERTIES, "batchsize": os.getenv("JDBC_BATCHSIZE", "10000")}
+
 
 def period_bounds(year: int, months: list[int]) -> tuple[date, date]:
     """Inclusive [first day of first month, last day of last month]."""
@@ -33,11 +37,6 @@ def period_bounds(year: int, months: list[int]) -> tuple[date, date]:
 
 
 def prepare_load(mode: str, start: date, end: date) -> None:
-    """Clear targets so ingestion + transform stay idempotent per period.
-
-    init: full rebuild — truncate staging and dwh facts.
-    incremental: delete only rows belonging to the loaded period.
-    """
     if mode == "init":
         execute("TRUNCATE staging.fact_trip, staging.fact_weather")
         execute("TRUNCATE dwh.fact_trip, dwh.fact_weather")
@@ -83,9 +82,6 @@ def _build_fact_trip(spark: SparkSession, start: date, end: date) -> None:
         & (col("tpep_pickup_datetime") < (end + timedelta(days=1)).isoformat())
     )
 
-    # fact_trip carries the TLC LocationID business key. dim_location is SCD2,
-    # so a zone may have several rows; we only need the set of valid business
-    # keys to filter out unknown locations.
     known_locations = [
         row.location_id
         for row in _read_staging(spark, "dwh.dim_location")
@@ -128,7 +124,10 @@ def _build_fact_trip(spark: SparkSession, start: date, end: date) -> None:
 
     written = fact_trip.count()
     fact_trip.write.jdbc(
-        url=JDBC_URL, table="dwh.fact_trip", mode="append", properties=JDBC_PROPERTIES
+        url=JDBC_WRITE_URL,
+        table="dwh.fact_trip",
+        mode="append",
+        properties=JDBC_WRITE_PROPERTIES,
     )
     logger.info("wrote dwh.fact_trip", extra={"rows": written})
 
@@ -175,10 +174,10 @@ def _build_fact_weather(spark: SparkSession, start: date, end: date) -> None:
 
     written = fact_weather.count()
     fact_weather.write.jdbc(
-        url=JDBC_URL,
+        url=JDBC_WRITE_URL,
         table="dwh.fact_weather",
         mode="append",
-        properties=JDBC_PROPERTIES,
+        properties=JDBC_WRITE_PROPERTIES,
     )
     logger.info("wrote dwh.fact_weather", extra={"rows": written})
 
@@ -189,16 +188,7 @@ def run_pipeline(
     months: list[int],
     simulate_scd2: bool = True,
 ) -> None:
-    """Load dimensions, then both fact tables for the given period.
-
-    Assumes prepare_load() already cleared the dwh targets for this period,
-    so fact writes are plain appends.
-
-    dim_location is maintained as an SCD2 dimension. Because the real TLC zone
-    lookup is static, synthetic service_zone changes (effective on/before the
-    period end) are injected when simulate_scd2 is True, so SCD2 versioning is
-    exercised end-to-end. Changes take effect from the period start.
-    """
+    
     start, end = period_bounds(year, months)
 
     load_dim_date(start, end)

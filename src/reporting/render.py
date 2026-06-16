@@ -1,16 +1,3 @@
-"""BI reporting layer: build the rpt views and render business reports.
-
-Run after a load + quality check:
-    uv run python -m src.reporting.render
-
-Creates/refreshes the rpt.* views, queries them, and renders one PNG per
-report into reports/figures/ plus a combined reports/reports.pdf.
-
-Design: the data-shaping logic (binning, ordering, aggregation, reconciliation)
-lives in pure functions that take and return pandas DataFrames with no DB or
-plotting side effects, so they are unit-testable without a database. The DB and
-matplotlib calls are confined to the thin wrappers at the bottom.
-"""
 
 from __future__ import annotations
 
@@ -20,9 +7,9 @@ from pathlib import Path
 
 import matplotlib
 
-matplotlib.use("Agg")  # headless backend; safe in containers/CI
-import matplotlib.pyplot as plt  # noqa: E402
-import pandas as pd  # noqa: E402
+matplotlib.use("Agg") 
+import matplotlib.pyplot as plt
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +19,6 @@ VIEWS_SQL = Path(__file__).with_name("views.sql")
 
 PRECIP_BAND_ORDER = ["Dry", "Light", "Moderate", "Heavy"]
 SEASON_ORDER = ["Winter", "Spring", "Summer", "Autumn"]
-
-# ---------------------------------------------------------------------------
-# Pure data-shaping functions (no DB, no plotting) — unit-tested.
-# ---------------------------------------------------------------------------
 
 
 def shape_precip_trips(df: pd.DataFrame) -> pd.DataFrame:
@@ -117,12 +100,6 @@ def reconcile_total(detail: pd.DataFrame, summary_total: float, column: str) -> 
     Used to assert a report does not drop or duplicate measure rows.
     """
     return bool(abs(float(detail[column].sum()) - float(summary_total)) < 1e-6)
-
-
-# ---------------------------------------------------------------------------
-# Pure figure builders — return a Figure, no I/O. Unit-tested for non-emptiness.
-# ---------------------------------------------------------------------------
-
 
 def _bar_figure(
     df: pd.DataFrame, x: str, y: str, title: str, xlabel: str, ylabel: str
@@ -224,11 +201,6 @@ REPORTS: dict[str, tuple[str, Callable[[pd.DataFrame], plt.Figure], str]] = {
     "Seasonal comparison": ("rpt.v_seasonal", fig_seasonal, "05_seasonal.png"),
     "Hourly weather": ("rpt.v_hourly_weather", fig_hourly_weather, "06_hourly_weather.png"),
 }
-
-
-# ---------------------------------------------------------------------------
-# DB + filesystem wrappers (thin; not unit-tested).
-# ---------------------------------------------------------------------------
 
 
 def apply_views() -> None:

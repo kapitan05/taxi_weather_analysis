@@ -1,4 +1,3 @@
-"""Shared fixtures for the pure unit-test suite (no DB, no Spark)."""
 
 from datetime import date
 

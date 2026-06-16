@@ -9,12 +9,9 @@ from src.db.connection import pg_conn
 
 logger = logging.getLogger(__name__)
 
-# Open end date for the currently-active SCD2 version.
 SCD2_OPEN_END = date(9999, 12, 31)
-# Default start for the very first version of a zone.
 SCD2_EPOCH = date(1900, 1, 1)
 
-# Attributes tracked for change detection in dim_location (SCD2 type 2).
 TRACKED_LOCATION_ATTRS = ("borough", "zone", "service_zone")
 
 
@@ -23,7 +20,6 @@ def date_key(d: date) -> int:
 
 
 def load_dim_date(start: date, end: date) -> int:
-    """Upsert one dim_date row per day in [start, end] with US/NY holidays."""
     years = list(range(start.year, end.year + 1))
     ny_holidays = holidays.country_holidays("US", subdiv="NY", years=years)
 
@@ -60,11 +56,6 @@ def load_dim_date(start: date, end: date) -> int:
     return len(rows)
 
 
-# ---------------------------------------------------------------------------
-# dim_location — SCD2 (type 2)
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class LocationVersion:
     """A current (live) SCD2 row for one taxi zone."""
@@ -78,14 +69,6 @@ class LocationVersion:
 
 @dataclass(frozen=True)
 class Scd2Plan:
-    """Result of diffing an incoming snapshot against the current dim rows.
-
-    closes  : (location_id, new_valid_to) — current rows whose attributes
-              changed; their validity is closed the day before effective_date.
-    inserts : new current versions to add (new zones AND new versions of
-              changed zones), each as (location_id, borough, zone, service_zone,
-              valid_from, version).
-    """
 
     closes: list[tuple[int, date]]
     inserts: list[tuple[int, str, str, str, date, int]]
@@ -96,16 +79,7 @@ def compute_scd2_changes(
     incoming: list[LocationVersion],
     effective_date: date,
 ) -> Scd2Plan:
-    """Pure SCD2 diff. No database access — fully unit-testable.
 
-    Rules:
-      * new business key            -> insert version 1 (valid_from = SCD2_EPOCH)
-      * tracked attribute changed   -> close current row (valid_to =
-                                       effective_date - 1 day) and insert a new
-                                       version (valid_from = effective_date,
-                                       version = prev + 1)
-      * unchanged                   -> no-op
-    """
     current_by_id = {v.location_id: v for v in current}
     closes: list[tuple[int, date]] = []
     inserts: list[tuple[int, str, str, str, date, int]] = []
@@ -170,11 +144,7 @@ def _fetch_current_locations() -> list[LocationVersion]:
 def _fetch_staged_locations(
     overrides: dict[int, str] | None = None,
 ) -> list[LocationVersion]:
-    """Read the staged TLC zone snapshot.
-
-    overrides maps location_id -> service_zone and lets the simulation inject
-    synthetic changes on top of the (static) real source.
-    """
+    
     overrides = overrides or {}
     with pg_conn() as conn, conn.cursor() as cur:
         cur.execute(
@@ -235,13 +205,7 @@ def load_dim_location(
     effective_date: date,
     service_zone_overrides: dict[int, str] | None = None,
 ) -> Scd2Plan:
-    """SCD2 merge of the staged zone snapshot into dwh.dim_location.
-
-    effective_date          : date from which detected changes take effect
-                              (typically the loaded period's start).
-    service_zone_overrides  : optional synthetic service_zone changes
-                              (location_id -> service_zone) from the simulation.
-    """
+   
     current = _fetch_current_locations()
     incoming = _fetch_staged_locations(service_zone_overrides)
     plan = compute_scd2_changes(current, incoming, effective_date)

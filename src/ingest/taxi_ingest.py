@@ -14,7 +14,6 @@ TLC_BASE_URL = (
     "yellow_tripdata_{year:04d}-{month:02d}.parquet"
 )
 
-# Parquet camelCase -> staging.fact_trip snake_case
 COLUMN_RENAMES = {
     "VendorID": "vendor_id",
     "RatecodeID": "rate_code_id",

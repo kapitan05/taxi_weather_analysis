@@ -1,16 +1,6 @@
--- ============================================================
--- NYC Weather vs Taxi Trips — Data Warehouse Schema
--- Fact constellation: shared dims (date, time), two fact tables.
--- Idempotent: safe to re-run (applied by the db-init service).
--- ============================================================
 
 CREATE SCHEMA IF NOT EXISTS staging;
 CREATE SCHEMA IF NOT EXISTS dwh;
-
--- ------------------------------------------------------------
--- STAGING — raw landing zone written by PySpark JDBC.
--- Column types match the Parquet / API source exactly.
--- ------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS staging.fact_trip (
     vendor_id                 INTEGER,

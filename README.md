@@ -1,15 +1,15 @@
 # NYC Weather vs Taxi Trips — Data Warehouse
 
-An end-to-end data warehouse project integrating NYC yellow taxi trip records (TLC Trip Record Data) with historical weather data (Open-Meteo). Data is loaded by a PySpark ETL into a PostgreSQL warehouse modelled as a **fact constellation**, and analysed in **Tableau**.
+An end-to-end data warehouse project integrating NYC yellow taxi trip records (TLC Trip Record Data) with historical weather data (Open-Meteo). Data is loaded by a PySpark ETL into a PostgreSQL warehouse modelled as a **fact constellation**.
 
 **Data sources:** NYC TLC yellow taxi trip records (Parquet) · TLC taxi zone lookup (CSV) · Open-Meteo historical weather API (15-minute JSON)
-**Stack:** PySpark · PostgreSQL · Tableau · Docker Compose
+**Stack:** PySpark · PostgreSQL · Metabase · Docker Compose
 
 ## Architecture
 
 ```
 TLC Parquet ──────┐
-TLC zone CSV ─────┼─▶  PySpark ETL  ─▶  PostgreSQL DWH      ─▶  Tableau
+TLC zone CSV ─────┼─▶  PySpark ETL  ─▶  PostgreSQL DWH      ─▶  Metabase
 Open-Meteo API ───┘     staging.*        dwh.* (constellation)
 ```
 
@@ -78,23 +78,22 @@ docker compose exec etl-runner uv run python -m src.quality.checks
 
 Results are written to `reports/quality_report.md` and `reports/quality_report.json`; the command exits non-zero if any check fails.
 
-## BI layer (Tableau)
-
-Connect Tableau to PostgreSQL:
-
-- **Server/port:** `localhost:5432` · **Database:** `nyc_weather_taxi` · **Schema:** `dwh` (facts/dims) and `rpt` (report views)
-- Join facts to dimensions on `date_key`, `time_key`, `weather_type_key`; for location join `*_location_key = dim_location.location_id AND is_current` (SCD2)
-- Hierarchies: Date (Year → Month → Day), Time (Time of day → Hour → Minute), Location (Borough → Zone → Service zone)
-
-### Reporting layer + rendered reports
-
-`src/reporting/views.sql` defines a `rpt` schema of six report-ready views over `dwh.*` (precipitation vs trips, temperature vs duration, monthly trend, daily KPI by borough, seasonal comparison, hourly weather), each joining the live SCD2 zone version. Tableau can connect directly to these, or render them headlessly:
+### Reporting layer
 
 ```bash
 docker compose exec etl-runner uv run python -m src.reporting.render
 ```
 
-This (re)creates the views and writes one PNG per report to `reports/figures/` plus a combined `reports/reports.pdf`. The data-shaping logic lives in pure functions (`src/reporting/render.py`) that are unit-tested without a database.
+
+### Metabase (interactive BI dashboard)
+
+Metabase runs as part of the stack (`docker compose up -d`) on **http://localhost:3000**. After a data load and once the `rpt` views exist, auto-provision the connection, six questions and a dashboard:
+
+```bash
+docker compose exec etl-runner uv run python -m src.reporting.metabase_setup
+```
+
+Then open http://localhost:3000 and log in with **admin@nyc-taxi.local / Metabase123!** — the **NYC Taxi & Weather** dashboard is under *Dashboards*. 
 
 ### Tests
 

@@ -1,4 +1,3 @@
-"""Unit tests for the pure SCD2 diff logic (no DB)."""
 
 from datetime import date, timedelta
 

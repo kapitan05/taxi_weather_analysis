@@ -12,9 +12,6 @@ from src.db.connection import JDBC_PROPERTIES, JDBC_URL
 
 logger = logging.getLogger(__name__)
 
-# 15-minute observations; aggregated to full hours in dwh.fact_weather.
-# Note: the plain archive API ignores minutely_15 — only the
-# historical-forecast endpoint serves 15-minute data.
 WEATHER_API_BASE = (
     "https://historical-forecast-api.open-meteo.com/v1/forecast"
     "?latitude=40.7128&longitude=-74.0060"

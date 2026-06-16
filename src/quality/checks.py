@@ -1,11 +1,3 @@
-"""Data quality analysis for the staging and dwh layers.
-
-Run after a load:
-    uv run python -m src.quality.checks
-
-Writes reports/quality_report.md and reports/quality_report.json;
-exits non-zero if any check fails.
-"""
 
 import json
 import logging
@@ -34,7 +26,6 @@ ROW_COUNT_TABLES = [
     "dwh.fact_weather",
 ]
 
-# name -> SQL returning a single violation count (expected 0)
 ZERO_EXPECTED_CHECKS: dict[str, str] = {
     "fact_trip: null keys/measures": """
         SELECT COUNT(*) FROM dwh.fact_trip
@@ -52,8 +43,6 @@ ZERO_EXPECTED_CHECKS: dict[str, str] = {
         LEFT JOIN dwh.dim_date d ON f.date_key = d.date_key
         WHERE d.date_key IS NULL
     """,
-    # dim_location is SCD2 (no DB FK); RI is enforced here against the live
-    # version of each zone (location_id + is_current).
     "fact_trip: orphaned pickup location": """
         SELECT COUNT(*) FROM dwh.fact_trip f
         LEFT JOIN dwh.dim_location l
@@ -149,8 +138,6 @@ def run_checks() -> list[CheckResult]:
             CheckResult(name=name, passed=violations == 0, value=violations, expected="0")
         )
 
-    # Consistency staging -> dwh: every staged trip with a positive duration
-    # must land in fact_trip exactly once.
     staged = int(
         fetch_one(
             "SELECT COUNT(*) FROM staging.fact_trip "

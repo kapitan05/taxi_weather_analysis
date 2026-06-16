@@ -1,4 +1,3 @@
-"""Unit tests for the deterministic SCD2 change simulation."""
 
 from datetime import date
 

@@ -1,6 +1,3 @@
-version: '3.8'
-
-# DEV environment — Postgres DWH + PySpark ETL runner; BI (Tableau) connects to :5432
 
 services:
   postgres-dwh:
@@ -44,6 +41,7 @@ services:
     volumes:
       - ./src:/app/src
       - ./main.py:/app/main.py
+      - ./geo:/app/geo
     working_dir: /app
     depends_on:
       postgres-dwh:
@@ -53,8 +51,43 @@ services:
     networks:
       - data-network
 
+  geojson:
+    # Serves the repaired NYC taxi-zone GeoJSON to Metabase's custom map at
+    # http://geojson/taxi_zones.geojson (run src.reporting.prepare_geojson first).
+    image: nginx:alpine
+    container_name: nyc_taxi_geojson
+    volumes:
+      - ./geo:/usr/share/nginx/html:ro
+    ports:
+      - "8088:80"
+    networks:
+      - data-network
+
+  metabase:
+    image: metabase/metabase:v0.49.13
+    container_name: nyc_taxi_metabase
+    ports:
+      - "3000:3000"
+    environment:
+      # Use the embedded H2 app DB, persisted to a named volume (dev-only).
+      MB_DB_FILE: /metabase-data/metabase.db
+      JAVA_TIMEZONE: America/New_York
+    volumes:
+      - metabase-data:/metabase-data
+    depends_on:
+      postgres-dwh:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks:
+      - data-network
+
 volumes:
   pgdata:
+  metabase-data:
 
 networks:
   data-network:

@@ -1,16 +1,6 @@
--- ============================================================
--- Reporting layer (BI) — rpt schema.
--- Stable, denormalised views over dwh.* that back the business
--- reports / figures. dim_location is SCD2, so every join uses the
--- live version (location_id + is_current).
--- Idempotent: CREATE OR REPLACE.
--- ============================================================
 
 CREATE SCHEMA IF NOT EXISTS rpt;
 
--- Trips enriched with the hourly weather observation + live zone attributes.
--- fact_trip is minute-grain; weather is hourly, so the trip time_key is
--- truncated to the hour ((time_key / 10000) * 10000) for the join.
 CREATE OR REPLACE VIEW rpt.v_trip_enriched AS
 SELECT
     f.date_key,
@@ -115,6 +105,22 @@ SELECT
     AVG(temperature)               AS avg_temperature
 FROM rpt.v_trip_enriched
 GROUP BY 1;
+
+-- Map — trips per pickup taxi zone, for a choropleth keyed on TLC LocationID.
+-- Joins to the current SCD2 zone version; LEFT JOIN keeps zones with 0 trips.
+CREATE OR REPLACE VIEW rpt.v_zone_trips AS
+SELECT
+    l.location_id,
+    l.zone,
+    l.borough,
+    l.service_zone,
+    COUNT(f.pu_location_key)              AS trip_count,
+    COALESCE(AVG(f.total_amount), 0)      AS avg_total,
+    COALESCE(SUM(f.total_amount), 0)      AS total_revenue
+FROM dwh.dim_location l
+LEFT JOIN dwh.fact_trip f ON f.pu_location_key = l.location_id
+WHERE l.is_current
+GROUP BY l.location_id, l.zone, l.borough, l.service_zone;
 
 -- Report 6 — hourly weather report.
 CREATE OR REPLACE VIEW rpt.v_hourly_weather AS

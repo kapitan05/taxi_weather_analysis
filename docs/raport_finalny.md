@@ -19,7 +19,7 @@ Celem systemu jest zaprojektowanie i wdrożenie hurtowni danych integrującej in
 - **Optymalizacja liczby aktywnych pojazdów** w zależności od bieżącej i prognozowanej pogody — redukcja pustych przebiegów.
 - **Możliwość agregacji danych pogodowych niezależnie** od szczegółowych przejazdów — analiza trendów temperaturowych i opadów w NYC.
 - **Wsparcie decyzyjne w zakresie dynamicznej polityki cenowej** (surge pricing) — korelacja podaży i popytu z warunkami atmosferycznymi.
-- **Dashboardy interaktywne w Tableau** — gotowy model danych umożliwia analizę ad-hoc przez analityków biznesowych.
+- **Dashboardy interaktywne w Metabase** — gotowy model danych umożliwia analizę ad-hoc przez analityków biznesowych.
 
 ---
 
@@ -49,7 +49,7 @@ Celem systemu jest zaprojektowanie i wdrożenie hurtowni danych integrującej in
                     └──────────────────────┬──────────────────────────┘
                                            │ TCP :5432
                     ┌──────────────────────▼──────────────────────────┐
-                    │           Tableau Desktop                        │
+                    │           Metabase                              │
                     │           (bezpośrednie połączenie z dwh.*)     │
                     └─────────────────────────────────────────────────┘
 ```
@@ -62,7 +62,7 @@ Celem systemu jest zaprojektowanie i wdrożenie hurtowni danych integrującej in
 | ETL | PySpark 4.1.1, psycopg2, Docker Compose | Ekstrakcja, czyszczenie, transformacja, ładowanie |
 | Strefa lądowania | PostgreSQL 15, schemat `staging` | Bufor surowych danych przed transformacją |
 | Hurtownia | PostgreSQL 15, schemat `dwh` | Model konstelacji faktów, docelowy model analityczny |
-| BI | Tableau Desktop | Zapytania ad-hoc, raporty, dashboardy |
+| BI | Metabase Desktop | Zapytania ad-hoc, raporty, dashboardy |
 
 Schemat `staging` pełni rolę bufora lądowania — surowe dane ze źródeł trafiają najpierw tutaj, a dopiero po transformacji i czyszczeniu zasilają schemat `dwh`. Oddzielenie warstw umożliwia niezależny re-run transformacji bez ponownego pobierania danych.
 
@@ -361,18 +361,9 @@ ConditionName (Clear/Rain/Snow/…) → weather_type_key (WMO code)
 ## 7. Opis warstwy raportowej
 
 ### Dostęp do danych
-Aplikacja Tableau Desktop łączy się bezpośrednio z bazą PostgreSQL poprzez standardowe połączenie TCP. Dane pobierane są w trybie Live / Extract (w zależności od potrzeb analitycznych).
-
-| Parametr | Wartość |
-|---|---|
-| **Server** | `localhost` (lub adres hosta Docker) |
-| **Port** | `5432` |
-| **Database** | `nyc_weather_taxi` |
-| **Schema** | `dwh` |
-| **User** | `data_engineer` |
+Aplikacja  Metabase łączy się bezpośrednio z bazą PostgreSQL poprzez standardowe połączenie TCP. Dane pobierane są w trybie Live / Extract (w zależności od potrzeb analitycznych).
 
 ### Model biznesowy danych
-W warstwie semantycznej Tableau zastosowano model relacyjny oparty na **Logical Layer** (Relacje zamiast fizycznych złączeń typu JOIN). Umożliwia to elastyczną analizę danych o różnym poziomie ziarnistości (przejazdy vs pogoda) bez ryzyka duplikacji danych.
 
 Model biznesowy to klasyczna **Konstelacja Faktów (Galaxy Schema)**:
 * **Fakty przejazdów** (`fact_trip`) i **Fakty pogodowe** (`fact_weather`) funkcjonują jako niezależne tabele centralne.
@@ -380,121 +371,28 @@ Model biznesowy to klasyczna **Konstelacja Faktów (Galaxy Schema)**:
 * Tabela `fact_trip` posiada dodatkowe relacje z `dim_location` (osobno dla strefy startowej i końcowej).
 * Tabela `fact_weather` posiada dedykowaną relację z `dim_weather_type`.
 
-### Hierarchie w warstwie raportowej
-Aby ułatwić użytkownikom końcowym analizę typu "drill-down" (np. od lat do pojedynczych minut), w Tableau zdefiniowano następujące hierarchie nawigacyjne:
-* **Data:** `Year` → `Month` → `Day`
-* **Czas:** `Time of Day` → `Hour` → `Minute`
-* **Lokalizacja:** `Borough` → `Zone` → `Service Zone`
-* **Pogoda:** `Condition Name` → `Description`
-
-### Transformacje w obrębie warstwy raportowej
-Oprócz twardych danych z bazy `dwh`, w warstwie raportowej Tableau zdefiniowano dedykowane transformacje (Calculated Fields), które wzbogacają analizę bez obciążania bazy danych:
-
-1.  **Miary biznesowe (KPIs):**
-    * `[Tip Percentage]` = `SUM([tip_amount]) / SUM([fare_amount])` (Procent napiwku względem opłaty za kurs).
-    * `[Avg Trip Revenue]` = `SUM([total_amount]) / COUNT([fact_trip])` (Średni przychód na przejazd).
-    * `[Revenue per Mile]` = `SUM([total_amount]) / SUM([trip_distance])` (Rentowność jednej mili).
-2.  **Kategoryzacje i Flagi (Wymiary wyliczane):**
-    * `[Is Bad Weather]` = `IF [condition_name] IN ('Rain', 'Snow', 'Thunderstorm') THEN True ELSE False END` (Ułatwia szybkie filtrowanie pogody na dobrą/złą).
-3.  **Formatowanie:** Automatyczne rzutowanie pól walutowych (np. `fare_amount`) na format `$ USD` oraz dystansu na `miles` z dokładnością do dwóch miejsc po przecinku.
-
 ## 8. Opis realizacji przykładowych raportów
 
 Na podstawie modelu zaimplementowanego w `dwh.*` możliwe jest przygotowanie następujących raportów zdefiniowanych w raporcie wstępnym:
 
-### Raport 1 — Wpływ opadów na liczbę przejazdów
+### Raport 1 Wpływ opadów na liczbę przejazdów
 **Wizualizacja:** wykres słupkowy / liniowy z filtrami dzielnicy i pory dnia
 
-**Logika SQL:**
-```sql
-SELECT
-    CASE
-        WHEN w.precipitation = 0 THEN 'Brak opadów'
-        WHEN w.precipitation < 2 THEN 'Lekkie opady'
-        ELSE 'Intensywne opady'
-    END AS precipitation_bucket,
-    COUNT(t.*) AS trip_count,
-    AVG(t.total_amount) AS avg_fare
-FROM dwh.fact_trip t
-JOIN dwh.dim_date d ON t.date_key = d.date_key
-JOIN dwh.fact_weather w ON t.date_key = w.date_key
-    AND (t.time_key / 10000) = (w.time_key / 10000)
-JOIN dwh.dim_time dt ON t.time_key = dt.time_key
-GROUP BY 1
-ORDER BY 1;
-```
-
-### Raport 2 — Średnia temperatura a czas przejazdu
+### Raport 2 Średnia temperatura a czas przejazdu
 **Wizualizacja:** heatmapa (oś X: temperatura w przedziałach, oś Y: pora dnia)
 
-**Logika SQL:**
-```sql
-SELECT
-    ROUND(w.temperature)::int AS temp_rounded,
-    dt.time_of_day,
-    AVG(t.trip_duration_sec / 60.0) AS avg_duration_min
-FROM dwh.fact_trip t
-JOIN dwh.fact_weather w ON t.date_key = w.date_key
-    AND (t.time_key / 10000) = (w.time_key / 10000)
-JOIN dwh.dim_time dt ON t.time_key = dt.time_key
-GROUP BY 1, 2;
-```
-
-### Raport 3 — Liczba przejazdów w kolejnych miesiącach (trend)
+### Raport 3 Liczba przejazdów w kolejnych miesiącach (trend)
 **Wizualizacja:** wykres liniowy, filtr: rok
 
-**Logika SQL:**
-```sql
-SELECT d.year, d.month, COUNT(*) AS trip_count
-FROM dwh.fact_trip t
-JOIN dwh.dim_date d ON t.date_key = d.date_key
-GROUP BY 1, 2
-ORDER BY 1, 2;
-```
-
-### Raport 4 — Dashboard operacyjny (KPI dzienny)
-**Wizualizacja:** karty KPI + mapa stref
-
-**Metryki:**
-- Dzienna liczba przejazdów: `COUNT(*) GROUP BY date_key`
-- Suma opadów: `SUM(precipitation) GROUP BY date_key` z `fact_weather`
-- Średni napiwek: `AVG(tip_amount) GROUP BY date_key`
-- Liczba przejazdów na strefę: `COUNT(*) GROUP BY pu_location_key` + join `dim_location`
-
-### Raport 5 — Porównanie sezonowe (zima vs. lato)
+### Raport 4 Porównanie sezonowe (zima vs. lato)
 **Wizualizacja:** wykresy grupowane
 
-**Logika SQL:**
-```sql
-SELECT
-    CASE WHEN d.month IN (12,1,2) THEN 'Zima'
-         WHEN d.month IN (6,7,8) THEN 'Lato'
-         ELSE 'Wiosna/Jesień' END AS season,
-    AVG(t.total_amount) AS avg_fare,
-    AVG(t.trip_duration_sec/60.0) AS avg_duration_min,
-    COUNT(*) AS trip_count
-FROM dwh.fact_trip t
-JOIN dwh.dim_date d ON t.date_key = d.date_key
-GROUP BY 1;
-```
-
-### Raport 6 — Raport pogodowy godzinowy
+### Raport 5 Zmiana pogody w czasie
 **Wizualizacja:** wykresy liniowe temperatury, opadów i wiatru w czasie
 
-**Logika SQL:**
-```sql
-SELECT
-    d.full_date, dt.hour,
-    w.temperature, w.precipitation, w.wind_speed,
-    wt.condition_name
-FROM dwh.fact_weather w
-JOIN dwh.dim_date d ON w.date_key = d.date_key
-JOIN dwh.dim_time dt ON w.time_key = dt.time_key
-JOIN dwh.dim_weather_type wt ON w.weather_type_key = wt.weather_type_key
-ORDER BY d.full_date, dt.hour;
-```
+### Raport 6 mapa NYC
+**Wizualizacja:** liczba przejazdów w poszczególnych dzielnicach NYC wskazana na mapie
 
----
 
 ## 9. Opis rezultatów analizy jakości danych
 
@@ -702,10 +600,10 @@ Schema init: `INSERT 0 1440` (dim_time), `INSERT 0 28` (dim_weather_type), `0 er
 | Poprawność danych | Wszystkie 19 kontroli jakości PASS; exact match staging ↔ DWH |
 | Skalowalność | PySpark umożliwia przetwarzanie wielu miesięcy równolegle |
 | Niezawodność | Idempotentne ładowanie — bezpieczny re-run i dołączanie nowych miesięcy |
-| Dostępność dla BI | Tableau łączy się bezpośrednio; model gotowy dla wszystkich 6 raportów |
+| Dostępność dla BI | Metabase łączy się bezpośrednio; model gotowy dla wszystkich raportów |
 | Czas ładowania | Styczeń 2023 (2,88 mln przejazdów): ~8 min na single-node Spark |
 
-System umożliwia realizację wszystkich 6 raportów biznesowych zdefiniowanych w raporcie wstępnym. Model danych jest gotowy do podłączenia Tableau i tworzenia interaktywnych dashboardów.
+System umożliwia realizację wszystkich raportów biznesowych zdefiniowanych w raporcie wstępnym. Model danych jest gotowy do podłączenia Metabase i tworzenia interaktywnych dashboardów.
 
 ---
 
@@ -719,4 +617,4 @@ System umożliwia realizację wszystkich 6 raportów biznesowych zdefiniowanych 
 | Moduł jakości danych (quality/checks.py) | Oleksii Vinichenko |
 | Konfiguracja Docker Compose | Maksim Razantsau |
 | Testowanie i weryfikacja end-to-end | Maksim Razantsau |
-| [do uzupełnienia] | Oleksii Vinichenko |
+| Warstwa wizualizacji | Oleksii Vinichenko |

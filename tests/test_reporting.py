@@ -1,9 +1,3 @@
-"""Unit tests for the reporting layer (pure shaping + figure builders).
-
-No database: shaping functions are fed synthetic DataFrames that mimic the
-rpt.* view output, and the views.sql file is checked structurally.
-"""
-
 import matplotlib
 import pandas as pd
 import pytest
@@ -121,3 +115,23 @@ def test_views_join_current_location_version():
 
 def test_reports_registry_has_six_reports():
     assert len(render.REPORTS) == 6
+
+
+# --- interactive HTML dashboard (pure render) ------------------------------
+
+
+def test_render_html_is_standalone_and_embeds_data():
+    from src.reporting.dashboard_html import render_html
+
+    charts = [
+        {"id": "precip", "title": "1. Precip", "type": "bar",
+         "x": ["Dry", "Heavy"], "y": [100, 30], "xlabel": "Band", "ylabel": "Trips"},
+        {"id": "hourly", "title": "6. Hourly", "type": "scatter",
+         "x": [0, 1], "y": [5.0, 6.0], "xlabel": "Hour", "ylabel": "Temp"},
+    ]
+    html = render_html(charts)
+    assert html.startswith("<!DOCTYPE html>")
+    assert "plotly" in html.lower()
+    assert "Plotly.newPlot" in html
+    # embedded data is present
+    assert "Dry" in html and "1. Precip" in html
